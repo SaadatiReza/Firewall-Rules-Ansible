@@ -1,0 +1,36 @@
+---
+- name: Check listening ports and generate CSV report
+  hosts: all
+  become: yes
+  vars:
+    report_file: "/tmp/listening_ports_report.csv"
+
+  tasks:
+    - name: Get listening ports
+      shell: "netstat -tuln | grep LISTEN | awk '{print $4}' | awk -F: '{print $NF}'"
+      register: listening_ports
+
+    - name: Gather IP and Hostname
+      set_fact:
+        ip_address: "{{ ansible_default_ipv4.address }}"
+        hostname: "{{ ansible_hostname }}"
+
+    - name: Create listening ports data structure
+      set_fact:
+        listening_ports_data: "{{ listening_ports.stdout_lines | map('regex_replace', '^(.*)$', ip_address + ',' + hostname + ',\\1') | list }}"
+
+    - name: Write data to CSV file
+      copy:
+        content: |
+          IP Address,Hostname,Listening Port
+          {% for line in listening_ports_data %}
+          {{ line }}
+          {% endfor %}
+        dest: "{{ report_file }}"
+
+    - name: Copy the report to local machine
+      fetch:
+        src: "{{ report_file }}"
+        dest: "./"
+        flat: yes
+
