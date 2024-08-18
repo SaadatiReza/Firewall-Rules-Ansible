@@ -1,0 +1,69 @@
+---
+- name: Check listening ports and firewall rules, add rules if missing
+  hosts: all
+  become: yes
+  vars:
+    firewalld_service: firewalld
+    ufw_service: ufw
+
+  tasks:
+    - name: Get listening ports
+      shell: "netstat -tuln | grep LISTEN | awk '{print $4}' | awk -F: '{print $NF}'"
+      register: listening_ports
+
+    - name: Set firewall service variable
+      set_fact:
+        firewall_service: "{{ firewalld_service if ansible_os_family == 'RedHat' else ufw_service }}"
+
+    - name: Check if firewalld is installed and running (RedHat-based)
+      when: ansible_os_family == "RedHat"
+      systemd:
+        name: firewalld
+        state: started
+        enabled: yes
+
+    - name: Check if ufw is installed and running (Debian-based)
+      when: ansible_os_family == "Debian"
+      apt:
+        name: ufw
+        state: present
+        update_cache: yes
+
+    - name: Start ufw if not running (Debian-based)
+      when: ansible_os_family == "Debian"
+      command: ufw enable
+      ignore_errors: yes
+
+    - name: Check and add firewall rules if missing (RedHat-based)
+      when: ansible_os_family == "RedHat"
+      block:
+        - name: Check firewall rule for port
+          shell: firewall-cmd --list-ports | grep -w {{ item }}/tcp
+          register: firewall_rule
+          ignore_errors: yes
+          loop: "{{ listening_ports.stdout_lines }}"
+
+        - name: Add firewall rule for port
+          when: firewall_rule.rc != 0
+          shell: firewall-cmd --permanent --add-port={{ item }}/tcp
+          loop: "{{ listening_ports.stdout_lines }}"
+
+        - name: Reload firewall (RedHat-based)
+          shell: firewall-cmd --reload
+
+    - name: Check and add firewall rules if missing (Debian-based)
+      when: ansible_os_family == "Debian"
+      block:
+        - name: Check firewall rule for port
+          shell: ufw status | grep -w {{ item }}/tcp
+          register: firewall_rule
+          ignore_errors: yes
+          loop: "{{ listening_ports.stdout_lines }}"
+
+        - name: Add firewall rule for port
+          when: firewall_rule.rc != 0
+          shell: ufw allow {{ item }}/tcp
+          loop: "{{ listening_ports.stdout_lines }}"
+
+        - name: Reload firewall (Debian-based)
+          shell: ufw reload
