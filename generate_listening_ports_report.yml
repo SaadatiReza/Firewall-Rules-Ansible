@@ -1,0 +1,45 @@
+---
+- name: Check listening ports and generate Excel report
+  hosts: all
+  become: yes
+  vars:
+    report_file: "/tmp/listening_ports_report.xlsx"
+
+  tasks:
+    - name: Get listening ports
+      shell: netstat -tuln | grep LISTEN | awk '{print $4}' | awk -F: '{print $NF}'
+      register: listening_ports
+
+    - name: Gather IP and Hostname
+      set_fact:
+        ip_address: "{{ ansible_default_ipv4.address }}"
+        hostname: "{{ ansible_hostname }}"
+
+    - name: Create listening ports data structure
+      set_fact:
+        listening_ports_data: "{{ listening_ports.stdout_lines | map('regex_replace', '^(.*)$', ip_address + ',' + hostname + ' \\1') | list }}"
+
+    - name: Install python3 and pip
+      package:
+        name:
+          - python3
+          - python3-pip
+        state: present
+
+    - name: Install openpyxl for excel manipulation
+      pip:
+        name: openpyxl
+
+    - name: Write data to Excel file
+      community.general.write_excel:
+        path: "{{ report_file }}"
+        data:
+          - columns: ["IP Address", "Hostname", "Listening Port"]
+            rows: "{{ listening_ports_data | map('split', ',') | list }}"
+      delegate_to: localhost
+
+    - name: Copy the report to local machine
+      fetch:
+        src: "{{ report_file }}"
+        dest: "./"
+        flat: yes
